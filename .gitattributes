@@ -1,0 +1,8 @@
+# Treat R scripts as R
+*.R linguist-language=R
+
+# Treat R Markdown as R Markdown
+*.Rmd linguist-language=RMarkdown
+
+# Treat rendered R Notebooks as R Markdown
+*.nb.html linguist-language=RMarkdown
