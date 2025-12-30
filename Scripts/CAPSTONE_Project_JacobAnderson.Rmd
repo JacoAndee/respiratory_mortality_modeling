@@ -1,0 +1,1203 @@
+---
+title: "Bayesian Spatiotemporal Analysis of Ozone Pollution in California"
+output: html_notebook
+---
+
+**Author: Jacob Anderson**
+
+**Mentor: Orhun Aydin**
+
+**Research Question**: To what extent does tropospheric ozone exposure explain spatial variation in respiratory mortality across the state of California, and which Bayesian spatial modeling framework — Gaussian BYM2 or Poisson BYM2 — accurately captures this relationship while quantifying uncertainty and identifying high-risk communities?
+
+**The problem**: Respiratory mortality varies substantially across California, and tropospheric ozone—driven by meteorology, emissions, and land use coverage is a major contributor to elevated ozone concentrations. However, accurately quantifying the relationship between ozone exposure and respiratory health remains challenging because both ozone and mortality exhibit strong spatial autocorrelation, measurement uncertainty, and heterogeneity across counties. Remotely sensed ozone estimates introduce additional uncertainty due to unit conversion assumptions and vertical column effects, while traditional regression models cannot properly account for spatial dependence or unequal population structures across counties. As a result, existing approaches risk producing biased effect estimates and misleading conclusions about which communities face the greatest ozone related health risk. A spatial Bayesian framework is needed to appropriately model these uncertainties, capture geographic patterns in exposure and mortality, and provide reliable inference for public health decision making in the state of California.
+
+**Preliminary Tasks: Load libraries, set directories, and credentials**
+
+```{r Load packages}
+
+### Load packages into R environment
+
+library(arcgisbinding)
+library(raster)
+library(sf)
+library(spdep)
+library(dplyr)
+library(corrplot)
+library(performance)
+library(Matrix)
+library(car)
+library(INLA)
+library(bayesplot)
+library(ggplot2)
+library(viridis)
+library(RColorBrewer)
+
+arc.check_product()
+arc.check_portal()
+```
+
+```{r Set directories}
+
+### Important directories for project
+
+### Set the working directory for the project
+
+setwd("C:/Users/ja090/Desktop/Files/JHU/FA25_CAPSTONE/Project/Data")
+
+### Set data directory as R object
+
+data_dir <- "C:/Users/ja090/Desktop/Files/JHU/FA25_CAPSTONE/Project/Data"
+
+### Set geodatabase directory as R object
+
+gdb <- "C:/Users/ja090/Desktop/Files/JHU/FA25_CAPSTONE/Project/Data/Project_Data.gdb"
+```
+
+```{r Access the file geodatabase and inspect data frame}
+
+### arc.open function to open the main data frame
+
+fc <- arc.open(file.path(data_dir, "Project_Data.gdb/model_df"))
+
+### arc.select to select the data frame
+
+fc_df <- arc.select(fc)
+
+### arc.data2sf to convert ArcGIS data to sf object
+
+fc_df <- arc.data2sf(fc_df)
+```
+
+**Preliminary Tasks: Calculate rates and log offset for Bayesian Spatial Regression**
+
+```{r Data management and calculations}
+
+### Calculate total mortality rate
+### Calculate respiratory mortality rate
+
+fc_df <- st_transform(fc_df, 3310) %>%
+  mutate(
+    mortality_rate = (All_Mortality / TOT_POP) * 1e5,
+    resp_mortality_rate = (RespiratoryDeaths / TOT_POP) * 1e5,
+    resp_deaths = RespiratoryDeaths,
+    log_pop = log(TOT_POP))
+
+### Drop non essential columns
+
+fc_df <- fc_df %>% 
+  select(where(~ !all(is.na(.))))
+
+```
+
+**Raster data: NASA TEMPO Ozone for 2024 (Converted from DU to ppm)**
+
+```{r Display raster values}
+
+### Read ozone rasters (ppm) and plot for each month in 2024
+
+month_names <- paste0("o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+
+### Apply 3x4 grid to plot
+
+par(mfrow = c(3, 4), mar = c(2, 2, 2, 5))
+
+### Loop to display the raster data
+
+for (m in month_names) {
+  ras_path <- file.path(gdb, m)
+  ras <- arc.open(ras_path)
+  ras_o3 <- arc.raster(ras)
+  o3_data <- as.raster(ras_o3)
+  plot(o3_data, main = toupper(m))
+}
+```
+**Exploratory Analysis of key variables**
+
+```{r Exploratory Data Analysis Part 1 - Histogram}
+
+### Histogram for target variable (rate)
+
+hist(fc_df$resp_mortality_rate,
+     breaks = 18,
+     col = "grey",
+     border = "black",
+     main = "Distribution of Respiratory Related Mortality",
+     xlab = "Number of Deaths from Respiratory Illness",
+     ylab = "Frequency")
+
+### Add the mean line
+
+abline(v = mean(fc_df$resp_mortality_rate,
+                na.rm = T),
+       col = "red",
+       lwd = 2,
+       lty = 2)
+
+```
+
+```{r Exploratory Data Analysis Part 2 - Box Plots}
+
+### Box plots for mean and max ozone for each month
+
+mean_cols <- paste0("MEAN_o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+
+max_cols <- paste0("MAX_o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+
+### Prepare plot area
+
+par(mfrow = c(1, 1), mar = c(6, 5, 4, 2))
+
+### Collect the columns for each month
+### Store in list
+
+plot_data <- list()
+plot_labels <- character(0)
+
+### Plot the mean ozone concentrations
+
+mean_data <- vector("list", 12)
+for (i in 1:12) {
+  mean_data[[i]] <- as.numeric(fc_df[[mean_cols[i]]])
+}
+par(mar = c(6, 5, 4, 2))
+boxplot(mean_data,
+        names = month.abb,
+        las = 2,
+        col = "grey",
+        outline = T, 
+        pch = 19, 
+        cex = 0.6, 
+        boxwex = 0.6,
+        ylab = "Ozone (ppm)",
+        main = "Monthly Ozone — MEAN")
+
+### Plot the max ozone concentrations
+
+max_data <- vector("list", 12)
+for (i in 1:12) {
+  max_data[[i]] <- as.numeric(fc_df[[max_cols[i]]])
+}
+par(mar = c(6, 5, 4, 2))
+boxplot(max_data,
+        names = month.abb,
+        las = 2,
+        col = "grey",
+        outline = T, 
+        pch = 19, 
+        cex = 0.6, 
+        boxwex = 0.6,
+        ylab = "Ozone (ppm)",
+        main = "Monthly Ozone — MAX")
+
+```
+
+```{r Spatial Autocorrelation}
+
+### Test for spatial autocorrelation
+
+### Build neighbors & weights
+
+nb <- poly2nb(as_Spatial(fc_df))
+lw <- nb2listw(nb, style = "W", zero.policy = T)
+
+### Global Moran's I: respiratory mortality rate
+
+print("Global Moran's I: Respiratory mortality rate")
+g_morans_resp <- moran.test(fc_df$resp_mortality_rate, lw, zero.policy = T)
+
+g_morans_resp_results <- data.frame(
+  variable = "resp_mortality_rate",
+  morans_I = unname(g_morans_resp$estimate[["Moran I statistic"]]),
+  expectation = unname(g_morans_resp$estimate[["Expectation"]]),
+  variance = unname(g_morans_resp$estimate[["Variance"]]),
+  p_value = g_morans_resp$p.value
+)
+
+### Write the results to table
+
+g_morans_resp_results <- write.csv(g_morans_resp_results, file.path(data_dir, "respiratory_morans.csv"), row.names = F)
+
+### Ozone column names
+
+mean_cols <- paste0("MEAN_o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+max_cols <- paste0("MAX_o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+
+
+### Global Moran's I ozone concentrations (Mean & Max by month)
+
+mi_vals_mean <- numeric(12) 
+p_vals_mean <- numeric(12)
+mi_vals_max <- numeric(12)
+p_vals_max <- numeric(12)
+
+print("Global Moran's I: Ozone (monthly MEAN)")
+for (i in 1:12) {
+  v_mean <- as.numeric(fc_df[[mean_cols[i]]])
+  mi_mean <- moran.test(v_mean, lw, zero.policy = T)
+  mi_vals_mean[i] <- unname(mi_mean$estimate[["Moran I statistic"]])
+  p_vals_mean[i] <- mi_mean$p.value
+  print(mi_mean)
+}
+
+print("Global Moran's I: Ozone (monthly MAX)")
+for (i in 1:12) {
+  v_max <- as.numeric(fc_df[[max_cols[i]]])
+  mi_max <- moran.test(v_max, lw, zero.policy = T)
+  mi_vals_max[i] <- unname(mi_max$estimate[["Moran I statistic"]])
+  p_vals_max[i]  <- mi_max$p.value
+  print(mi_max)
+}
+
+o3_morans_results <- data.frame(
+  month = 1:12,
+  label = month.abb,
+  morans_I_mean = mi_vals_mean,
+  p_mean = p_vals_mean,
+  morans_I_max = mi_vals_max,
+  p_max = p_vals_max
+)
+
+### Write the results to table
+
+o3_morans_results <- write.csv(o3_morans_results, file.path(data_dir, "o3_morans.csv"), row.names = F)
+
+### Local Gi*: Respiratory mortality rate
+
+gi_resp <- localG(fc_df$resp_mortality_rate, lw, zero.policy = T)
+fc_df$gi_resp <- as.numeric(gi_resp)
+
+### Local Gi*: Ozone (Mean & Max by month)
+
+for (i in 1:12) {
+  gi_mean <- localG(as.numeric(fc_df[[mean_cols[i]]]), lw, zero.policy = T)
+  gi_max <- localG(as.numeric(fc_df[[max_cols[i]]]),  lw, zero.policy = T)
+  fc_df[[paste0("gi_", mean_cols[i])]] <- as.numeric(gi_mean)
+  fc_df[[paste0("gi_", max_cols[i])]] <- as.numeric(gi_max)
+}
+
+### Gi* class settings
+
+gi_breaks <- c(-Inf, -2.58, -1.96, 1.96, 2.58, Inf)
+gi_labs <- c("Cold (99%)","Cold (95%)","Not Sig","Hot (95%)","Hot (99%)")
+pal_vals <- c("#084594", "#4292c6", "grey90", "#fb6a4a", "#cb181d"); names(pal_vals) <- gi_labs
+
+### Respiratory mortality Gi* plot
+
+op <- par(no.readonly = T)
+par(mar = c(1,1,3,1))
+fc_df$gi_class_resp <- cut(fc_df$gi_resp, breaks = gi_breaks, labels = gi_labs)
+cols_resp <- pal_vals[as.character(fc_df$gi_class_resp)]
+plot(st_geometry(fc_df), 
+     col = cols_resp, 
+     border = "grey", 
+     lwd = 0.01,
+     main = "Gi* — Respiratory Death Rate")
+legend("bottomleft", fill = pal_vals, legend = names(pal_vals), bty = "n", cex = 0.9)
+
+### Build matrices of monthly Gi* z-scores for plot
+
+gi_mean_mat <- cbind(
+  as.numeric(fc_df[["gi_MEAN_o3_01"]]), as.numeric(fc_df[["gi_MEAN_o3_02"]]),
+  as.numeric(fc_df[["gi_MEAN_o3_03"]]), as.numeric(fc_df[["gi_MEAN_o3_04"]]),
+  as.numeric(fc_df[["gi_MEAN_o3_05"]]), as.numeric(fc_df[["gi_MEAN_o3_06"]]),
+  as.numeric(fc_df[["gi_MEAN_o3_07"]]), as.numeric(fc_df[["gi_MEAN_o3_08"]]),
+  as.numeric(fc_df[["gi_MEAN_o3_09"]]), as.numeric(fc_df[["gi_MEAN_o3_10"]]),
+  as.numeric(fc_df[["gi_MEAN_o3_11"]]), as.numeric(fc_df[["gi_MEAN_o3_12"]])
+)
+
+gi_max_mat <- cbind(
+  as.numeric(fc_df[["gi_MAX_o3_01"]]), as.numeric(fc_df[["gi_MAX_o3_02"]]),
+  as.numeric(fc_df[["gi_MAX_o3_03"]]), as.numeric(fc_df[["gi_MAX_o3_04"]]),
+  as.numeric(fc_df[["gi_MAX_o3_05"]]), as.numeric(fc_df[["gi_MAX_o3_06"]]),
+  as.numeric(fc_df[["gi_MAX_o3_07"]]), as.numeric(fc_df[["gi_MAX_o3_08"]]),
+  as.numeric(fc_df[["gi_MAX_o3_09"]]), as.numeric(fc_df[["gi_MAX_o3_10"]]),
+  as.numeric(fc_df[["gi_MAX_o3_11"]]), as.numeric(fc_df[["gi_MAX_o3_12"]])
+)
+
+### 3×4 Gi* plot: Ozone MEAN
+
+layout(matrix(c( 1,  2,  3,  4, 13,
+                 5,  6,  7,  8, 13,
+                 9, 10, 11, 12, 13), nrow = 3, byrow = T),
+       widths = c(1,1,1,1,0.50), heights = c(1,1,1))
+
+par(mar = c(1,1,3,1))
+
+for (i in 1:12) {
+  cl <- cut(gi_mean_mat[, i], breaks = gi_breaks, labels = gi_labs)
+  cols <- pal_vals[as.character(cl)]
+  plot(st_geometry(fc_df), col = cols, border = "grey", lwd = 0.01,
+       main = paste0("Gi* Ozone Mean — ", month.abb[i]))
+}
+
+par(mar = c(0,0,0,0)); plot.new()
+
+legend("center", fill = pal_vals, legend = names(pal_vals), ncol = 1, bty = "n", cex = 1)
+
+layout(1)
+
+### 3×4 Gi* plot: Ozone MAX
+
+layout(matrix(c( 1,  2,  3,  4, 13,
+                 5,  6,  7,  8, 13,
+                 9, 10, 11, 12, 13), nrow = 3, byrow = T),
+       widths = c(1,1,1,1,0.50), heights = c(1,1,1))
+
+par(mar = c(1,1,3,1))
+
+for (i in 1:12) {
+  cl   <- cut(gi_max_mat[, i], breaks = gi_breaks, labels = gi_labs)
+  cols <- pal_vals[as.character(cl)]
+  plot(st_geometry(fc_df), col = cols, border = "grey", lwd = 0.01,
+       main = paste0("Gi* Ozone Max — ", month.abb[i]))
+}
+
+par(mar = c(0,0,0,0)); plot.new()
+
+legend("center", fill = pal_vals, legend = names(pal_vals), ncol = 1, bty = "n", cex = 1)
+
+layout(1)
+
+par(op)
+```
+```{r Aggregate ozone for annual mean and max}
+
+### Aggregate all ozone measurements (mean & max) to annual estimates for each county
+
+fc_no_geom <- st_drop_geometry(fc_df)
+
+mean_cols <- paste0("MEAN_o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+
+max_cols <- paste0("MAX_o3_", ifelse(1:12 < 10, paste0("0", 1:12), 1:12))
+
+fc_no_geom$o3_mean_annual <- rowMeans(fc_no_geom[, mean_cols, drop = F], na.rm = T)
+
+fc_no_geom$o3_max_annual <- do.call(pmax, c(fc_no_geom[, max_cols], na.rm = T))
+
+```
+
+``` {r Collinearity Test}
+
+### Collinearity test between covariates
+
+### Group land cover variables
+
+fc_no_geom <- fc_no_geom %>%
+  mutate(
+    LC_urban = PCT_DEV_OPEN + PCT_DEV_LOW + PCT_DEV_MED + PCT_DEV_HIGH,
+    LC_forest = PCT_DEC_FOR + PCT_EVG_FOR + PCT_MX_FOR,
+    LC_ag = PCT_CROPLAND + PCT_PASTURE,
+    LC_natural = PCT_SHRUB + PCT_GRASSLAND + PCT_BARREN,
+    LC_wetlands = PCT_W_WETLAND + PCT_E_WETLAND
+  )
+
+### Build a list of the variables
+
+l <- c(
+  "LC_urban",
+  "LC_forest",
+  "LC_ag",
+  "LC_natural",
+  "LC_wetlands",
+  "abnormal_D0",
+  "moderate_D1",
+  "severe_D2",
+  "extreme_D3",
+  "MEAN_precip",
+  "MEAN_temp",
+  "o3_mean_annual",
+  "o3_max_annual",
+  "PCT_POP_POV",
+  "PCT_COM_OVER_90",
+  "PCT_POP_DEP_AGE_18_65",
+  "PCT_POP_NO_INSUR",
+  "resp_mortality_rate"
+)
+
+cor_vars <- fc_no_geom[, l, drop = F]
+
+pwise_matrix <- cor(
+  cor_vars,
+  use = "pairwise.complete.obs")
+  round(pwise_matrix, 2)
+  
+plot_cols <- colorRampPalette(brewer.pal(11, "RdBu"))(200)
+
+corrplot(
+  pwise_matrix,
+  col = plot_cols,
+  method = "color",
+  type = "full",
+  tl.col = "black",
+  tl.cex = 0.3,
+  order = "hclust",
+  addrect = 4,
+  mar = c(0, 0, 1, 0)
+)
+
+### Variables used in the VIF test
+
+vif_vars <- fc_no_geom[, c(
+  "LC_urban",
+  "LC_forest",
+  "LC_ag",
+  "LC_natural",
+  "LC_wetlands",
+  "abnormal_D0",
+  "moderate_D1",
+  "severe_D2",
+  "MEAN_precip",
+  "MEAN_temp",
+  "o3_mean_annual",
+  "PCT_POP_POV",
+  "PCT_COM_OVER_90",
+  "PCT_POP_DEP_AGE_18_65",
+  "PCT_POP_NO_INSUR"
+)]
+
+### Fit a simple linear model to compute VIF
+
+vif_mod <- lm(fc_no_geom$resp_mortality_rate ~ ., data = vif_vars)
+
+### Compute VIF
+
+vif_results <- vif(vif_mod)
+print(vif_results)
+```
+
+```{r Set predictors for Gaussian and Poisson models}
+
+### Establish the predictors for Gaussian and Poisson models
+### Setting the target variable as new R object
+
+resp_var <- "resp_mortality_rate"
+
+### Setting the predictor variables as new R obect
+
+pred_annual <- c(
+  "o3_mean_annual",
+  "MEAN_temp",
+  "MEAN_precip",
+  "severe_D2",
+  "LC_urban",
+  "PCT_POP_POV",
+  "PCT_COM_OVER_90",
+  "PCT_POP_DEP_AGE_18_65",
+  "PCT_POP_NO_INSUR"
+)
+
+pred_annual <- intersect(pred_annual, names(fc_no_geom))
+
+for (nm in unique(c(resp_var, pred_annual))) {
+  fc_no_geom[[nm]] <- as.numeric(fc_no_geom[[nm]])
+}
+
+```
+
+```{r Sample from prior distribution}
+
+### Sample for prior probability distribution
+
+### Set seed for reproducibility
+
+set.seed(123)
+
+x_raw <- as.matrix(fc_no_geom[, pred_annual, drop = F])
+
+x_scaled <- scale(x_raw)
+
+x <- cbind(Intercept = 1, x_scaled)
+
+y <- as.numeric(fc_no_geom[[resp_var]])
+
+beta0_mean <- mean(y, na.rm = T)
+
+beta0_sd <- sd(y, na.rm = T)
+
+slope_sd <- 5
+
+sigma_obs <- sd(y, na.rm = T) / 2
+
+n_draws <- 5000
+
+p <- ncol(x)
+
+beta <- matrix(0,
+               nrow = p, 
+               ncol = n_draws)
+
+beta[1,] <- rnorm(n_draws, beta0_mean, beta0_sd)
+
+if (p > 1) {
+  beta[2:p, ] <- matrix(rnorm((p - 1) * n_draws, 0, slope_sd), nrow = p - 1)
+}
+
+mu_prior <- x %*% beta
+
+y_prior <- mu_prior + matrix(rnorm(length(mu_prior), 0, sigma_obs), nrow = nrow(mu_prior))
+
+### Plot the prior probability distribution
+
+df_prior <- data.frame(y = as.numeric(y_prior))
+ggplot(df_prior, aes(x = y)) +
+  geom_density(fill = "grey", alpha = 0.5) +
+  theme_minimal() +
+  labs(
+    title = "Prior Distribution (Gaussian)",
+    x = "Respiratory Mortality",
+    y = "Density"
+  )
+
+```
+
+**Construct the two spatial models - Gaussian and Poisson**
+
+```{r Fit INLA model - Gaussian BYM2}
+
+### Build spatial adjacency
+
+nb <- poly2nb(as_Spatial(fc_df))
+
+a <- nb2mat(nb, style = "B")
+
+a[is.na(a)] <- 0
+
+a <- (a + t(a)) > 0
+
+a <- Matrix(a * 1, sparse = T)
+
+g <- inla.read.graph(a)
+
+### Scale the model
+
+x_a <- scale(as.matrix(fc_no_geom[, pred_annual, drop = F]))
+
+colnames(x_a) <- pred_annual
+
+df_model_annual <- fc_no_geom[, c(resp_var, pred_annual), drop = F]
+
+for (nm in pred_annual) df_model_annual[[nm]] <- x_a[, nm]
+
+df_model_annual$idx <- seq_len(nrow(df_model_annual))
+
+### Formula (Gaussian BYM2)
+
+form_a <- resp_mortality_rate ~ 
+  o3_mean_annual +
+  MEAN_temp +
+  MEAN_precip +
+  severe_D2 +
+  LC_urban +
+  PCT_POP_POV +
+  PCT_COM_OVER_90 +
+  PCT_POP_DEP_AGE_18_65 +
+  PCT_POP_NO_INSUR +
+  f(idx, 
+    model = "bym2",
+    graph = g, 
+    scale.model = T,
+    hyper = list(
+      prec = list(prior = "pc.prec", param = c(0.5, 0.5)),
+      phi = list(prior = "pc", param = c(0.5, 0.5))
+    ))
+
+### Model fit (Gaussian BYM2)
+
+fit_a <- inla(
+  formula = form_a,
+  data = df_model_annual,
+  family = "gaussian",
+  control.fixed = list(
+    mean.intercept = beta0_mean,
+    prec.intercept = 1 / (beta0_sd ^ 2 + 1e-8),
+    mean = 0,
+    prec = 1 / (slope_sd ^ 2)
+  ),
+  control.family = list(
+    hyper = list(prec = list(prior = "pc.prec", param = c(50, 0.5)))
+  ),
+  control.compute = list(dic = T, waic = T, cpo = T, return.marginals.predictor = T, config = T)
+)
+
+summary(fit_a)
+```
+
+```{r Fit INLA model - Poisson BYM2}
+
+### Build Poisson model data frame
+
+### Reuse scaled predictors
+
+fc_no_geom$resp_deaths <- as.numeric(fc_no_geom$RespiratoryDeaths)
+fc_no_geom$log_pop <- log(fc_no_geom$TOT_POP)
+
+df_model_pois <- fc_no_geom[, c("resp_deaths", pred_annual, "log_pop"), drop = F]
+
+for (nm in pred_annual) {
+  df_model_pois[[nm]] <- x_a[, nm]
+}
+
+df_model_pois$idx <- seq_len(nrow(df_model_pois))
+
+### Formula (Poisson BYM2)
+
+form_b <- resp_deaths ~ 
+  o3_mean_annual +
+  MEAN_temp +
+  MEAN_precip +
+  severe_D2 +
+  LC_urban +
+  PCT_POP_POV +
+  PCT_COM_OVER_90 +
+  PCT_POP_DEP_AGE_18_65 +
+  PCT_POP_NO_INSUR +
+  f(
+    idx,
+    model = "bym2",
+    graph = g,
+    scale.model = T,
+    hyper = list(
+      prec = list(prior = "pc.prec", param = c(0.5, 0.5)),
+      phi = list(prior = "pc", param = c(0.5, 0.5))
+    )
+  ) +
+  offset(log_pop)
+
+### Model fit (Poisson BYM2)
+
+fit_b <- inla(
+  formula = form_b,
+  data    = df_model_pois,
+  family  = "poisson",
+  control.fixed = list(
+    mean.intercept = 0,
+    prec.intercept = 1 / (5^2),
+    mean = 0,
+    prec = 1 / (slope_sd ^ 2)
+  ),
+  control.family = list(
+    link = "log"
+  ),
+  control.compute = list(dic = T, waic  = T, cpo = T, return.marginals.predictor = T, config = T
+  )
+)
+
+summary(fit_b)
+```
+
+** Run diagnostics and plot the results - Reporting diagnostics, Posterior estimates, residual estimates, and spatial autocorrelation assessment**
+
+```{r Plot results - Gaussian}
+
+sf_a <- df_model_annual
+
+st_geometry(sf_a) <- st_geometry(fc_df)
+
+st_crs(sf_a) <- st_crs(fc_df)
+
+### Model Results
+
+sum_a <- fit_a$summary.fitted.values
+sf_a$fit_mean <- sum_a$mean
+sf_a$fit_sd <- sum_a$sd
+sf_a$fit_lcl <- sum_a$`0.025quant`
+sf_a$fit_ucl <- sum_a$`0.975quant`
+sf_a$fit_ci <- sf_a$fit_ucl - sf_a$fit_lcl
+
+### Map posterior mean, sd, and ci (Gaussian)
+
+pa_mean <- ggplot(sf_a) +
+  geom_sf(aes(fill = fit_mean), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(name = "Posterior Mean", palette = "RdYlBu", direction = -1) +
+  labs(title = "Posterior Mean (Gaussian BYM2)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    panel.grid.major = element_line(linewidth = 0.1, linetype = "dotted")
+  )
+pa_mean
+
+pa_sd <- ggplot(sf_a) +
+  geom_sf(aes(fill = fit_sd), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(name = "Posterior SD", palette = "RdYlBu", direction = -1) +
+  labs(title = "Posterior SD (Gaussian BYM2)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    panel.grid.major = element_line(linewidth = 0.1, linetype = "dotted")
+  )
+pa_sd
+
+pa_ci <- ggplot(sf_a) +
+  geom_sf(aes(fill = fit_ci), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(name = "Posterior 95% CI Width", palette = "RdYlBu", direction = -1) +
+  labs(title = "Posterior 95% CI Width (Poisson BYM2)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    panel.grid.major = element_line(linewidth = 0.1, linetype = "dotted")
+  )
+pa_ci
+```
+
+```{r Plot results - Poisson}
+
+### Start from the same data frame
+### Create new R object
+
+sf_b <- fc_df
+
+### Extract fitted values from Poisson model
+
+sum_b <- fit_b$summary.fitted.values
+sf_b$fit_mean_cnt <- sum_b$mean
+sf_b$fit_lcl_cnt <- sum_b$`0.025quant`
+sf_b$fit_ucl_cnt <- sum_b$`0.975quant`
+sf_b$fit_sd_cnt <- sum_b$sd
+
+### Convert to rates per 100,000
+
+sf_b$fit_mean_rate <- (sf_b$fit_mean_cnt / sf_b$TOT_POP) * 1e5
+sf_b$fit_lcl_rate <- (sf_b$fit_lcl_cnt / sf_b$TOT_POP) * 1e5
+sf_b$fit_ucl_rate <- (sf_b$fit_ucl_cnt / sf_b$TOT_POP) * 1e5
+sf_b$fit_ci_rate <- sf_b$fit_ucl_rate - sf_b$fit_lcl_rate
+sf_b$fit_sd_rate <- (sf_b$fit_sd_cnt / sf_b$TOT_POP) * 1e5
+
+### Posterior mean map (Poisson)
+
+pb_mean <- ggplot(sf_b) +
+  geom_sf(aes(fill = fit_mean_rate), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(
+    name = "Posterior Mean",
+    palette = "RdYlBu",
+    direction = -1
+  ) +
+  labs(title = "Posterior Mean (Poisson BYM2)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    panel.grid.major = element_line(linewidth = 0.1, linetype = "dotted")
+  )
+pb_mean
+
+### Posterior SD map (Poisson)
+
+pb_sd <- ggplot(sf_b) +
+  geom_sf(aes(fill = fit_sd_rate), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(
+    name = "Posterior SD",
+    palette = "RdYlBu",
+    direction = -1
+  ) +
+  labs(title = "Posterior SD (Poisson BYM2)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    panel.grid.major = element_line(linewidth = 0.1, linetype = "dotted")
+  )
+pb_sd
+
+### Posterior CI width map (Poisson)
+
+pb_ci <- ggplot(sf_b) +
+  geom_sf(aes(fill = fit_ci_rate), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(
+    name = "Posterior 95% CI Width",
+    palette = "RdYlBu",
+    direction = -1
+  ) +
+  labs(title = "Posterior 95% CI Width (Poisson BYM2)") +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    panel.grid.major = element_line(linewidth = 0.1, linetype = "dotted")
+  )
+pb_ci
+```
+
+```{r Diagnostics}
+
+### Diagnostics - Gaussian model
+
+### R-Squared (Gaussian model)
+
+y_obs_gauss <- df_model_annual[[resp_var]]
+
+y_hat_gauss <- fit_a$summary.fitted.values$mean
+
+r_squared_gauss <- cor(
+  y_obs_gauss,
+  y_hat_gauss,
+  use = "complete.obs")^2
+
+print(paste("Gaussian R-Squared: ", round(r_squared_gauss, 3)))
+
+### RMSE (Gaussian model)
+
+rmse_gauss <- sqrt(mean(
+  (df_model_annual[[resp_var]] - fit_a$summary.fitted.values$mean)^2,
+  na.rm = T
+))
+print(paste("Gaussian RMSE: ", round(rmse_gauss, 3)))
+
+### 95% Predictive Coverage (Gaussian model)
+
+coverage95_gauss <- mean(
+  df_model_annual[[resp_var]] >= fit_a$summary.fitted.values$`0.025quant` &
+  df_model_annual[[resp_var]] <= fit_a$summary.fitted.values$`0.975quant`,
+  na.rm = T
+)
+print(paste("Gaussian 95% coverage: ", round(coverage95_gauss, 3)))
+
+### DIC (Gaussian model)
+
+print(paste("Gaussian DIC: ", round(fit_a$dic$dic, 3)))
+
+### WAIC (Gaussian model)
+
+print(paste("Gaussian WAIC: ", round(fit_a$waic$waic, 3)))
+
+### Diagnostics - Poisson model
+
+y_obs_rate <- df_model_annual[[resp_var]]
+
+pop_vec <- fc_no_geom$TOT_POP
+
+mu_hat_pois <- fit_b$summary.fitted.values$mean
+
+lcl_pois <- fit_b$summary.fitted.values$`0.025quant`
+
+ucl_pois <- fit_b$summary.fitted.values$`0.975quant`
+
+### Convert expected counts and intervals to rates
+
+y_hat_pois_rate <- (mu_hat_pois / pop_vec) * 1e5
+
+lcl_pois_rate <- (lcl_pois / pop_vec) * 1e5
+
+ucl_pois_rate <- (ucl_pois / pop_vec) * 1e5
+
+### R-Squared (Poisson model)
+
+y_obs_rate <- df_model_annual[[resp_var]]
+
+y_hat_pois_rate <- (fit_b$summary.fitted.values$mean / fc_no_geom$TOT_POP) * 1e5
+
+r_squared_pois <- cor(
+  y_obs_rate, 
+  y_hat_pois_rate,
+  use = "complete.obs")^2
+
+print(paste("Poisson R-Squared (rate scale): ", round(r_squared_pois, 3)))
+
+### RMSE (Poisson model)
+
+rmse_pois <- sqrt(mean(
+  (y_obs_rate - y_hat_pois_rate)^2,
+  na.rm = T
+))
+print(paste("Poisson RMSE: ", round(rmse_pois, 3)))
+
+### 95% Predictive Coverage (Poisson model)
+
+coverage95_pois <- mean(
+  y_obs_rate >= lcl_pois_rate &
+    y_obs_rate <= ucl_pois_rate,
+  na.rm = T
+)
+print(paste("Poisson 95% coverage: ", round(coverage95_pois, 3)))
+
+### DIC (Poisson model)
+
+print(paste("Poisson DIC: ", round(fit_b$dic$dic, 3)))
+
+### WAIC (Poisson model)
+
+print(paste("Poisson WAIC: ", round(fit_b$waic$waic, 3)))
+
+```
+
+```{r Residual Map and residual hotspot map - Gaussian}
+
+### Residual diagnostics for Gaussian model
+
+### Compute residuals in the model frame
+
+df_model_annual$residuals <- df_model_annual[[resp_var]] -
+  fit_a$summary.fitted.values$mean
+
+sf_resid <- fc_df
+
+sf_resid$residuals <- df_model_annual$residuals
+
+ggplot(sf_resid) +
+  geom_sf(aes(fill = residuals), color="grey", linewidth = 0.01) +
+  scale_fill_distiller(palette = "RdYlBu") +
+  labs(title="Residual Map (Gaussian BYM2)", fill = "Pearson Residual") +
+  theme_minimal()
+
+### Spatial autocorrelation in residuals
+
+nb_resid <- poly2nb(as_Spatial(fc_df))
+lw_resid <- nb2listw(nb_resid, style = "W", zero.policy = T)
+
+moran_res <- moran.test(sf_resid$residuals, lw_resid, zero.policy = T)
+
+print(moran_res)
+
+### Local Moran's I 
+
+lm_res <- localmoran(sf_resid$residuals,
+                     lw_resid,
+                     zero.policy = T)
+
+### Add results to the sf object
+
+sf_resid$Ii <- lm_res[, "Ii"]
+sf_resid$Z_Ii <- lm_res[, "Z.Ii"]
+sf_resid$p_Ii <- 2 * pnorm(-abs(sf_resid$Z_Ii))
+
+### Spatial lag of residuals
+
+lag_resid <- lag.listw(lw_resid,
+                       sf_resid$residuals,
+                       zero.policy = T)
+
+mean_resid <- mean(sf_resid$residuals, na.rm = T)
+
+mean_lag <- mean(lag_resid, na.rm = T)
+
+sf_resid$cluster <- "Not significant"
+
+sig <- sf_resid$p_Ii <= 0.05
+
+sf_resid$cluster[sig & sf_resid$residuals >  mean_resid & lag_resid >  mean_lag] <- "High-High"
+sf_resid$cluster[sig & sf_resid$residuals <  mean_resid & lag_resid <  mean_lag] <- "Low-Low"
+sf_resid$cluster[sig & sf_resid$residuals >  mean_resid & lag_resid <  mean_lag] <- "High-Low"
+sf_resid$cluster[sig & sf_resid$residuals <  mean_resid & lag_resid >  mean_lag] <- "Low-High"
+
+sf_resid$cluster <- factor(
+  sf_resid$cluster,
+  levels = c("High-High", "Low-Low", "High-Low", "Low-High", "Not significant"))
+
+### Local Moran's I plot
+
+ggplot(sf_resid) +
+  geom_sf(aes(fill = cluster), color = "grey", linewidth = 0.01) +
+  scale_fill_manual(
+    name = "cluster",
+    values = c(
+      "High-High" = "#b2182b",
+      "Low-Low" = "#2166ac",
+      "High-Low" = "#ef8a62",
+      "Low-High" = "#67a9cf",
+      "Not significant"= "white"
+    )) +
+  labs (
+    title = "Local Moran's I Cluster Map of Residuals",
+    subtitle = "Respiratory Mortality (Gaussian BYM2)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r Residual Map and residual hotspot map - Poisson}
+
+### Pearson residuals for Poisson model
+
+### Observed counts and fitted counts
+
+y_count   <- fc_no_geom$resp_deaths
+
+mu_hat_b  <- fit_b$summary.fitted.values$mean
+
+### Pearson residuals
+
+df_model_annual$resid_pois <- (y_count - mu_hat_b) / sqrt(mu_hat_b)
+
+sf_resid_p <- fc_df
+
+sf_resid_p$resid_pois <- df_model_annual$resid_pois
+
+### Residual map
+
+ggplot(sf_resid_p) +
+  geom_sf(aes(fill = resid_pois), color = "grey", linewidth = 0.01) +
+  scale_fill_distiller(palette = "RdYlBu") +
+  labs(
+    title = "Residual Map (Poisson BYM2)",
+    fill  = "Pearson Residual"
+  ) +
+  theme_minimal()
+
+### Spatial autocorrelation in Poisson residuals
+
+nb_resid <- poly2nb(as_Spatial(fc_df))
+lw_resid <- nb2listw(nb_resid, style = "W", zero.policy = T)
+
+moran_res_pois <- moran.test(sf_resid_p$resid_pois, lw_resid, zero.policy = T)
+print(moran_res_pois)
+
+### Local Moran's I for Poisson residuals
+
+lm_res_p <- localmoran(sf_resid_p$resid_pois,
+                       lw_resid,
+                       zero.policy = T)
+
+sf_resid_p$Ii   <- lm_res_p[, "Ii"]
+sf_resid_p$Z_Ii <- lm_res_p[, "Z.Ii"]
+sf_resid_p$p_Ii <- 2 * pnorm(-abs(sf_resid_p$Z_Ii))
+
+### Spatial lag of residuals
+
+lag_resid_p <- lag.listw(lw_resid,
+                         sf_resid_p$resid_pois,
+                         zero.policy = T)
+
+mean_resid_p <- mean(sf_resid_p$resid_pois, na.rm = T)
+mean_lag_p <- mean(lag_resid_p, na.rm = T)
+
+sf_resid_p$cluster <- "Not significant"
+sig_p <- sf_resid_p$p_Ii <= 0.05
+
+sf_resid_p$cluster[sig_p & sf_resid_p$resid_pois >  mean_resid_p & lag_resid_p >  mean_lag_p] <- "High-High"
+sf_resid_p$cluster[sig_p & sf_resid_p$resid_pois <  mean_resid_p & lag_resid_p <  mean_lag_p] <- "Low-Low"
+sf_resid_p$cluster[sig_p & sf_resid_p$resid_pois >  mean_resid_p & lag_resid_p <  mean_lag_p] <- "High-Low"
+sf_resid_p$cluster[sig_p & sf_resid_p$resid_pois <  mean_resid_p & lag_resid_p >  mean_lag_p] <- "Low-High"
+
+sf_resid_p$cluster <- factor(
+  sf_resid_p$cluster,
+  levels = c("High-High", "Low-Low", "High-Low", "Low-High", "Not significant")
+)
+
+ggplot(sf_resid_p) +
+  geom_sf(aes(fill = cluster), color = "grey", linewidth = 0.01) +
+  scale_fill_manual(
+    name = "Cluster",
+    values = c(
+      "High-High" = "#b2182b",
+      "Low-Low" = "#2166ac",
+      "High-Low"= "#ef8a62",
+      "Low-High" = "#67a9cf",
+      "Not significant" = "white"
+    )
+  ) +
+  labs(
+    title = "Local Moran's I Cluster Map of Residuals",
+    subtitle = "Respiratory Mortality (Poisson BYM2)"
+  ) +
+  theme_minimal()
+```
+
+```{r Posterior Predictive Check}
+
+### Posterior predictive distribution vs observed
+
+post_mean <- fit_a$summary.fitted.values$mean
+
+ggplot() +
+  geom_point(aes(x = post_mean, y = df_model_annual[[resp_var]]),
+             color = "navy", alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Posterior Predictive Plot (Gaussian BYM2)",
+    x = "Predicted rate (per 100,000)",
+    y = "Observed rate (per 100,000)"
+  ) +
+  theme_minimal()
+
+### Predicted rate from Poisson (per 100,000)
+
+lp_b <- fit_b$summary.linear.predictor
+mu_hat_b <- exp(lp_b$mean)
+
+pop_vec <- fc_no_geom$TOT_POP
+y_hat_rate_pois <- (mu_hat_b / pop_vec) * 1e5
+y_obs_rate <- df_model_annual[[resp_var]]
+
+ggplot() +
+  geom_point(aes(x = y_hat_rate_pois, y = y_obs_rate),
+             color = "navy", alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0,
+              color = "red", linetype = "dashed") +
+  labs(
+    title = "Posterior Predictive Plot (Poisson BYM2)",
+    x = "Predicted rate (per 100,000)",
+    y = "Observed rate (per 100,000)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r Posterior Density Plot}
+
+### Posterior predictive density for respiratory mortality rate
+
+### Set seed for reproducability
+
+set.seed(123)
+
+### Extract fitted means
+
+sum_a <- fit_a$summary.fitted.values
+
+### Observed respiratory mortality
+
+y_obs <- df_model_annual[[resp_var]]
+
+### Sample from the posterior
+
+prec_marg <- fit_a$marginals.hyperpar[["Precision for the Gaussian observations"]]
+
+n_samp <- 5000
+
+prec_samp <- inla.rmarginal(n_samp, prec_marg)
+
+sigma_samp <- 1 / sqrt(prec_samp)
+
+### Combine with the fitted means to generate posterior predictive draws
+
+n_areas <- nrow(sum_a)
+
+idx_samp <- sample.int(n_areas, size = n_samp, replace = T)
+
+mu_samp <- sum_a$mean[idx_samp]
+
+y_rep <- rnorm(n_samp, mean = mu_samp, sd = sigma_samp)
+
+### Build data frames for plotting
+
+df_post <- data.frame(
+  value = y_rep,
+  type = "Posterior distribution"
+)
+
+df_obs <- data.frame(
+  value = y_obs,
+  type  = "Observed"
+)
+
+df_plot <- rbind(df_post, df_obs)
+
+### Density plot: posterior predictive vs observed
+
+ggplot(df_plot, aes(x = value, fill = type)) +
+  geom_density(alpha = 0.5) +
+  labs(
+    title = "Posterior Density Plot",
+    x = "Respiratory Mortality Rate",
+    y = "Density",
+    fill  = ""
+  ) +
+  theme_minimal()
+```
+
+**This study demonstrates that Bayesian spatial modeling provides an effective framework for examining ozone-related respiratory mortality while accounting for geographic dependence. The Gaussian model captured broad patterns and generated modest predictive performance, but much of the spatial structure remained unexplained. The Poisson BYM2 model, assisted by a log scaled offset for population and an appropriate incident count based likelihood, illuminated clear advantages over the Gaussian BYM2 model: improved predictive performance, better uncertainty calibration, and adequate handling of spatial autocorrelation for the residual estimates. Posterior mean surfaces from both models displayed strong regional variation in respiratory mortality risk, with elevated rates in northern and central California.**
+
+**These findings suggest that Poisson spatial model is more appropriate for county level mortality modeling and should be favored in future environmental health analyses and research. In future work, incorporating multiple years of NASA TEMPO ozone data, validating ozone conversion methods, integrating detailed socioeconomic indicators, and expanding to fully spatiotemporal Bayesian models could provide a more detailed understanding of air pollution interaction with demographic and climatic factors to influence respiratory health across California.**
