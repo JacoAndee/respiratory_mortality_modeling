@@ -1,7 +1,9 @@
 ---
 title: "Bayesian Spatiotemporal Analysis of Ozone Pollution in California"
-output: html_notebook
+output: md_document
 ---
+
+# Bayesian Spatiotemporal Analysis of Ozone Pollution in California
 
 **Author: Jacob Anderson**
 
@@ -11,7 +13,7 @@ output: html_notebook
 
 **The problem**: Respiratory mortality varies substantially across California, and tropospheric ozone—driven by meteorology, emissions, and land use coverage is a major contributor to elevated ozone concentrations. However, accurately quantifying the relationship between ozone exposure and respiratory health remains challenging because both ozone and mortality exhibit strong spatial autocorrelation, measurement uncertainty, and heterogeneity across counties. Remotely sensed ozone estimates introduce additional uncertainty due to unit conversion assumptions and vertical column effects, while traditional regression models cannot properly account for spatial dependence or unequal population structures across counties. As a result, existing approaches risk producing biased effect estimates and misleading conclusions about which communities face the greatest ozone related health risk. A spatial Bayesian framework is needed to appropriately model these uncertainties, capture geographic patterns in exposure and mortality, and provide reliable inference for public health decision making in the state of California.
 
-**Preliminary Tasks: Load libraries, set directories, and credentials**
+### Preliminary Tasks: Load libraries, set directories, and credentials
 
 ```{r Load packages}
 
@@ -68,7 +70,7 @@ fc_df <- arc.select(fc)
 fc_df <- arc.data2sf(fc_df)
 ```
 
-**Preliminary Tasks: Calculate rates and log offset for Bayesian Spatial Regression**
+### Preliminary Tasks: Calculate rates and log offset for Bayesian Spatial Regression
 
 ```{r Data management and calculations}
 
@@ -89,7 +91,7 @@ fc_df <- fc_df %>%
 
 ```
 
-**Raster data: NASA TEMPO Ozone for 2024 (Converted from DU to ppm)**
+### Raster data: NASA TEMPO Ozone for 2024 (Converted from DU to ppm)
 
 ```{r Display raster values}
 
@@ -111,7 +113,8 @@ for (m in month_names) {
   plot(o3_data, main = toupper(m))
 }
 ```
-**Exploratory Analysis of key variables**
+
+### Exploratory analysis of key variables - Part 1
 
 ```{r Exploratory Data Analysis Part 1 - Histogram}
 
@@ -134,6 +137,8 @@ abline(v = mean(fc_df$resp_mortality_rate,
        lty = 2)
 
 ```
+
+### Exploratory analysis of key variables - Part 2
 
 ```{r Exploratory Data Analysis Part 2 - Box Plots}
 
@@ -190,6 +195,8 @@ boxplot(max_data,
         main = "Monthly Ozone — MAX")
 
 ```
+
+### Test for Spatial Autocorrelation
 
 ```{r Spatial Autocorrelation}
 
@@ -360,6 +367,8 @@ layout(1)
 
 par(op)
 ```
+### Data management: Aggregate for annual ozone concentrations
+
 ```{r Aggregate ozone for annual mean and max}
 
 ### Aggregate all ozone measurements (mean & max) to annual estimates for each county
@@ -375,6 +384,8 @@ fc_no_geom$o3_mean_annual <- rowMeans(fc_no_geom[, mean_cols, drop = F], na.rm =
 fc_no_geom$o3_max_annual <- do.call(pmax, c(fc_no_geom[, max_cols], na.rm = T))
 
 ```
+
+### Collinearity diagnostics on the key variables
 
 ``` {r Collinearity Test}
 
@@ -465,6 +476,8 @@ vif_results <- vif(vif_mod)
 print(vif_results)
 ```
 
+### Establish the predictors for Bayesian spatial models
+
 ```{r Set predictors for Gaussian and Poisson models}
 
 ### Establish the predictors for Gaussian and Poisson models
@@ -493,6 +506,8 @@ for (nm in unique(c(resp_var, pred_annual))) {
 }
 
 ```
+
+### Sampling from the prior distribution
 
 ```{r Sample from prior distribution}
 
@@ -550,7 +565,7 @@ ggplot(df_prior, aes(x = y)) +
 
 ```
 
-**Construct the two spatial models - Gaussian and Poisson**
+### Fit the Gaussian BYM2 Spatial Model
 
 ```{r Fit INLA model - Gaussian BYM2}
 
@@ -622,6 +637,8 @@ fit_a <- inla(
 summary(fit_a)
 ```
 
+### Fit the Poisson BYM2 Spatial Model
+
 ```{r Fit INLA model - Poisson BYM2}
 
 ### Build Poisson model data frame
@@ -685,7 +702,7 @@ fit_b <- inla(
 summary(fit_b)
 ```
 
-** Run diagnostics and plot the results - Reporting diagnostics, Posterior estimates, residual estimates, and spatial autocorrelation assessment**
+### Plot the results from the Gaussian BYM2 Spatial Model 
 
 ```{r Plot results - Gaussian}
 
@@ -742,6 +759,8 @@ pa_ci <- ggplot(sf_a) +
   )
 pa_ci
 ```
+
+### Plot the results from the Poisson BYM2 Spatial Model 
 
 ```{r Plot results - Poisson}
 
@@ -820,6 +839,8 @@ pb_ci <- ggplot(sf_b) +
   )
 pb_ci
 ```
+
+### Diagnostics from the spatial models
 
 ```{r Diagnostics}
 
@@ -923,6 +944,8 @@ print(paste("Poisson WAIC: ", round(fit_b$waic$waic, 3)))
 
 ```
 
+### Residual map - Gaussian
+
 ```{r Residual Map and residual hotspot map - Gaussian}
 
 ### Residual diagnostics for Gaussian model
@@ -1006,6 +1029,8 @@ ggplot(sf_resid) +
   theme_minimal()
 
 ```
+
+### Residual map - Poisson
 
 ```{r Residual Map and residual hotspot map - Poisson}
 
@@ -1095,6 +1120,8 @@ ggplot(sf_resid_p) +
   theme_minimal()
 ```
 
+### Predicted vs observed plot
+
 ```{r Posterior Predictive Check}
 
 ### Posterior predictive distribution vs observed
@@ -1134,6 +1161,8 @@ ggplot() +
   theme_minimal()
 
 ```
+
+### Plot the posterior distribution
 
 ```{r Posterior Density Plot}
 

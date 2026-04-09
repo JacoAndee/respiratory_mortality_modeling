@@ -220,7 +220,7 @@ California.
 
 ![](CAPSTONE_Project_JacobAnderson_files/figure-markdown_strict/Display%20raster%20values-1.png)
 
-### Exploratory Analysis of key variables - Part 1
+### Exploratory analysis of key variables - Part 1
 
     ### Histogram for target variable (rate)
 
@@ -242,7 +242,7 @@ California.
 
 ![](CAPSTONE_Project_JacobAnderson_files/figure-markdown_strict/Exploratory%20Data%20Analysis%20Part%201%20-%20Histogram-1.png)
 
-### Exploratory Analysis of key variables - Part 2
+### Exploratory analysis of key variables - Part 2
 
     ### Box plots for mean and max ozone for each month
 
@@ -1136,42 +1136,42 @@ California.
     summary(fit_a)
 
     ## Time used:
-    ##     Pre = 10.6, Running = 0.315, Post = 0.472, Total = 11.4 
+    ##     Pre = 10.3, Running = 0.381, Post = 0.474, Total = 11.2 
     ## Fixed effects:
-    ##                          mean    sd 0.025quant 0.5quant 0.975quant    mode kld
-    ## (Intercept)           476.483 8.825    459.173  476.483    493.793 476.483   0
-    ## o3_mean_annual          2.025 4.515     -6.828    2.025     10.878   2.025   0
-    ## MEAN_temp              -1.948 4.551    -10.872   -1.948      6.975  -1.948   0
-    ## MEAN_precip            16.945 4.574      7.973   16.947     25.911  16.947   0
-    ## severe_D2              -1.150 4.479     -9.933   -1.150      7.633  -1.150   0
-    ## LC_urban               -5.057 4.484    -13.849   -5.057      3.737  -5.057   0
-    ## PCT_POP_POV             4.365 4.444     -4.351    4.366     13.080   4.366   0
-    ## PCT_COM_OVER_90        -1.225 4.434     -9.920   -1.226      7.470  -1.226   0
-    ## PCT_POP_DEP_AGE_18_65  14.756 4.507      5.915   14.757     23.592  14.757   0
-    ## PCT_POP_NO_INSUR       -2.147 4.462    -10.895   -2.147      6.604  -2.147   0
+    ##                          mean     sd 0.025quant 0.5quant 0.975quant    mode kld
+    ## (Intercept)           476.483 25.466    426.479  476.483    526.488 476.483   0
+    ## o3_mean_annual          0.945  4.912     -8.688    0.945     10.576   0.945   0
+    ## MEAN_temp              -1.207  4.914    -10.842   -1.208      8.428  -1.208   0
+    ## MEAN_precip             3.587  4.926     -6.074    3.588     13.244   3.588   0
+    ## severe_D2              -0.531  4.910    -10.158   -0.531      9.097  -0.531   0
+    ## LC_urban               -1.443  4.913    -11.076   -1.443      8.192  -1.443   0
+    ## PCT_POP_POV             1.048  4.911     -8.582    1.049     10.677   1.049   0
+    ## PCT_COM_OVER_90        -0.289  4.909     -9.914   -0.289      9.336  -0.289   0
+    ## PCT_POP_DEP_AGE_18_65   3.034  4.922     -6.619    3.035     12.684   3.035   0
+    ## PCT_POP_NO_INSUR       -0.083  4.910     -9.710   -0.083      9.545  -0.083   0
     ## 
     ## Random effects:
     ##   Name     Model
     ##     idx BYM2 model
     ## 
     ## Model hyperparameters:
-    ##                                          mean    sd 0.025quant 0.5quant
-    ## Precision for the Gaussian observations 0.354 0.318      0.070    0.263
-    ## Precision for idx                       0.000 0.000      0.000    0.000
-    ## Phi for idx                             0.106 0.032      0.051    0.103
-    ##                                         0.975quant  mode
-    ## Precision for the Gaussian observations      1.199 0.157
-    ## Precision for idx                            0.000 0.000
-    ## Phi for idx                                  0.176 0.099
+    ##                                           mean    sd 0.025quant 0.5quant
+    ## Precision for the Gaussian observations  0.000  0.00      0.000    0.000
+    ## Precision for idx                       98.150 17.43     74.599   94.903
+    ## Phi for idx                              0.079  0.01      0.063    0.078
+    ##                                         0.975quant   mode
+    ## Precision for the Gaussian observations      0.000  0.000
+    ## Precision for idx                          141.513 85.113
+    ## Phi for idx                                  0.102  0.074
     ## 
-    ## Deviance Information Criterion (DIC) ...............: 241.38
-    ## Deviance Information Criterion (DIC, saturated) ....: 82.63
-    ## Effective number of parameters .....................: 24.91
+    ## Deviance Information Criterion (DIC) ...............: 779.13
+    ## Deviance Information Criterion (DIC, saturated) ....: -193.88
+    ## Effective number of parameters .....................: 1.66
     ## 
-    ## Watanabe-Akaike information criterion (WAIC) ...: 266.06
-    ## Effective number of parameters .................: 39.07
+    ## Watanabe-Akaike information criterion (WAIC) ...: 779.54
+    ## Effective number of parameters .................: 1.99
     ## 
-    ## Marginal log-Likelihood:  -630.76 
+    ## Marginal log-Likelihood:  -366.93 
     ## CPO, PIT is computed 
     ## Posterior summaries for the linear predictor and the fitted values are computed
     ## (Posterior marginals needs also 'control.compute=list(return.marginals.predictor=TRUE)')
@@ -1239,7 +1239,7 @@ California.
     summary(fit_b)
 
     ## Time used:
-    ##     Pre = 9.48, Running = 0.302, Post = 0.47, Total = 10.3 
+    ##     Pre = 9.81, Running = 0.316, Post = 0.493, Total = 10.6 
     ## Fixed effects:
     ##                         mean    sd 0.025quant 0.5quant 0.975quant   mode kld
     ## (Intercept)           -5.403 0.035     -5.474   -5.403     -5.333 -5.403   0
@@ -1259,7 +1259,7 @@ California.
     ## 
     ## Model hyperparameters:
     ##                     mean    sd 0.025quant 0.5quant 0.975quant  mode
-    ## Precision for idx 10.119 2.662      5.863    9.792     16.267 9.173
+    ## Precision for idx 10.119 2.662      5.863    9.792     16.267 9.174
     ## Phi for idx        0.359 0.208      0.048    0.331      0.799 0.184
     ## 
     ## Deviance Information Criterion (DIC) ...............: 612.80
@@ -1435,7 +1435,7 @@ California.
 
     print(paste("Gaussian R-Squared: ", round(r_squared_gauss, 3)))
 
-    ## [1] "Gaussian R-Squared:  1"
+    ## [1] "Gaussian R-Squared:  0.261"
 
     ### RMSE (Gaussian model)
 
@@ -1445,7 +1445,7 @@ California.
     ))
     print(paste("Gaussian RMSE: ", round(rmse_gauss, 3)))
 
-    ## [1] "Gaussian RMSE:  0.119"
+    ## [1] "Gaussian RMSE:  194.223"
 
     ### 95% Predictive Coverage (Gaussian model)
 
@@ -1456,19 +1456,19 @@ California.
     )
     print(paste("Gaussian 95% coverage: ", round(coverage95_gauss, 3)))
 
-    ## [1] "Gaussian 95% coverage:  1"
+    ## [1] "Gaussian 95% coverage:  0.345"
 
     ### DIC (Gaussian model)
 
     print(paste("Gaussian DIC: ", round(fit_a$dic$dic, 3)))
 
-    ## [1] "Gaussian DIC:  241.384"
+    ## [1] "Gaussian DIC:  779.132"
 
     ### WAIC (Gaussian model)
 
     print(paste("Gaussian WAIC: ", round(fit_a$waic$waic, 3)))
 
-    ## [1] "Gaussian WAIC:  266.065"
+    ## [1] "Gaussian WAIC:  779.54"
 
     ### Diagnostics - Poisson model
 
@@ -1574,11 +1574,11 @@ California.
     ## data:  sf_resid$residuals  
     ## weights: lw_resid    
     ## 
-    ## Moran I statistic standard deviate = 0.32833, p-value = 0.3713
+    ## Moran I statistic standard deviate = 2.513, p-value = 0.005985
     ## alternative hypothesis: greater
     ## sample estimates:
     ## Moran I statistic       Expectation          Variance 
-    ##       0.009468279      -0.017543860       0.006768393
+    ##       0.190313105      -0.017543860       0.006841335
 
     ### Local Moran's I 
 
@@ -1681,11 +1681,11 @@ California.
     ## data:  sf_resid_p$resid_pois  
     ## weights: lw_resid    
     ## 
-    ## Moran I statistic standard deviate = 0.029418, p-value = 0.4883
+    ## Moran I statistic standard deviate = 0.029389, p-value = 0.4883
     ## alternative hypothesis: greater
     ## sample estimates:
     ## Moran I statistic       Expectation          Variance 
-    ##      -0.015741669      -0.017543860       0.003752867
+    ##      -0.015743434      -0.017543860       0.003752947
 
     ### Local Moran's I for Poisson residuals
 
